@@ -42,4 +42,7 @@ int pthread_join(pthread_t thread, void **retval);
     ```
 
 ## thread unlock
-<img src="./resources/thread-unlock-result.png">
+
+| result | CPU level viewpoint |
+|--------|---------------------|
+|<img src="./resources/thread-unlock-result.png" width="700px">|<img src="./resources/thread-unlock-cpu-level.png" width="800px">|
