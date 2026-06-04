@@ -13,6 +13,11 @@
 #include <time.h>
 #include <sys/time.h>
 #include <sys/stat.h>
+#include <libgen.h>         /* dirname() */
+
+#ifdef __APPLE__
+#include <mach-o/dyld.h>    /* _NSGetExecutablePath() — macOS 전용 */
+#endif
 
 #ifndef LOG_PREFIX
 #define LOG_PREFIX "app"
@@ -20,18 +25,60 @@
 
 static FILE *g_log_fp = NULL;
 
-/*
+/* -----------------------------------------------------------
+ * get_exe_dir : 실행 파일이 위치한 디렉토리 경로 반환
+ *   macOS : _NSGetExecutablePath()
+ *   Linux : /proc/self/exe readlink
+ * ----------------------------------------------------------- */
+static inline void get_exe_dir(char *out_dir, int bufsz) {
+    char exe_path[512] = {0};
+
+#ifdef __APPLE__
+    /* macOS: _NSGetExecutablePath 사용 */
+    uint32_t size = (uint32_t)sizeof(exe_path);
+    if (_NSGetExecutablePath(exe_path, &size) != 0) {
+        strncpy(out_dir, ".", bufsz - 1);
+        return;
+    }
+#else
+    /* Linux: /proc/self/exe 심볼릭 링크 읽기 */
+    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
+    if (len < 0) {
+        strncpy(out_dir, ".", bufsz - 1);
+        return;
+    }
+    exe_path[len] = '\0';
+#endif
+
+    /* 실행 파일 디렉토리 추출: .../build/server → .../build */
+    char exe_copy[512];
+    strncpy(exe_copy, exe_path, sizeof(exe_copy) - 1);
+    strncpy(out_dir, dirname(exe_copy), bufsz - 1);
+}
+
+/* -----------------------------------------------------------
  * log_open : 로그 파일 오픈
- */
+ *   실행 파일 기준 한 단계 위(프로젝트 루트)/log/ 에 생성
+ *   ex) build/server 실행 → ../log/server_YYYYMMDD.log
+ * ----------------------------------------------------------- */
 static inline void log_open(void) {
-    char filename[128];
+    char exe_dir[512]  = {0};
+    char log_dir[600]  = {0};
+    char filename[700] = {0};
+
     time_t now = time(NULL);
     struct tm *tm_info = localtime(&now);
 
-    /* log/ 디렉토리가 없으면 자동 생성 */
-    mkdir("log", 0755);
+    /* 실행 파일 디렉토리 획득 후 한 단계 위/log 경로 조합  */
+    /* ex) .../build → .../build/../log = 프로젝트 루트/log */
+    get_exe_dir(exe_dir, sizeof(exe_dir));
+    snprintf(log_dir, sizeof(log_dir), "%s/../log", exe_dir);
 
-    snprintf(filename, sizeof(filename), "log/%s_%04d%02d%02d.log",
+    /* log/ 디렉토리가 없으면 자동 생성 */
+    mkdir(log_dir, 0755);
+
+    snprintf(filename, sizeof(filename), "%s/%s_%04d%02d%02d.log",
+             log_dir,
              LOG_PREFIX,
              tm_info->tm_year + 1900,
              tm_info->tm_mon  + 1,
@@ -39,12 +86,12 @@ static inline void log_open(void) {
 
     g_log_fp = fopen(filename, "a");
     if (!g_log_fp) {
-        fprintf(stderr, "[WARN] Failed to open log file: %s\n", filename);
+        fprintf(stderr, "[ERROR] Failed to open log file: %s\n", filename);
     }
 }
 
 /*
- * log_close : 로그 파일 오픈
+ * log_close : 로그 파일 닫기
  */
 static inline void log_close(void) {
     if (g_log_fp) {
@@ -74,7 +121,7 @@ static inline void get_timestamp(char *buf, int bufsz) {
 }
 
 /*
- * log_write : 로그 파일 오픈
+ * log_write : stdout + 파일 동시 출력
  */
 static inline void log_write(const char *level, const char *fmt, ...) {
     char    ts[32];
