@@ -13,11 +13,7 @@
 #include <time.h>
 #include <sys/time.h>
 #include <sys/stat.h>
-#include <libgen.h>         /* dirname() */
-
-#ifdef __APPLE__
-#include <mach-o/dyld.h>    /* _NSGetExecutablePath() — macOS 전용 */
-#endif
+#include "path.h"       /* get_exe_dir() */
 
 #ifndef LOG_PREFIX
 #define LOG_PREFIX "app"
@@ -25,42 +21,9 @@
 
 static FILE *g_log_fp = NULL;
 
-/* -----------------------------------------------------------
- * get_exe_dir : 실행 파일이 위치한 디렉토리 경로 반환
- *   macOS : _NSGetExecutablePath()
- *   Linux : /proc/self/exe readlink
- * ----------------------------------------------------------- */
-static inline void get_exe_dir(char *out_dir, int bufsz) {
-    char exe_path[512] = {0};
-
-#ifdef __APPLE__
-    /* macOS: _NSGetExecutablePath 사용 */
-    uint32_t size = (uint32_t)sizeof(exe_path);
-    if (_NSGetExecutablePath(exe_path, &size) != 0) {
-        strncpy(out_dir, ".", bufsz - 1);
-        return;
-    }
-#else
-    /* Linux: /proc/self/exe 심볼릭 링크 읽기 */
-    ssize_t len = readlink("/proc/self/exe", exe_path, sizeof(exe_path) - 1);
-    if (len < 0) {
-        strncpy(out_dir, ".", bufsz - 1);
-        return;
-    }
-    exe_path[len] = '\0';
-#endif
-
-    /* 실행 파일 디렉토리 추출: .../build/server → .../build */
-    char exe_copy[512];
-    strncpy(exe_copy, exe_path, sizeof(exe_copy) - 1);
-    strncpy(out_dir, dirname(exe_copy), bufsz - 1);
-}
-
-/* -----------------------------------------------------------
+/* 
  * log_open : 로그 파일 오픈
- *   실행 파일 기준 한 단계 위(프로젝트 루트)/log/ 에 생성
- *   ex) build/server 실행 → ../log/server_YYYYMMDD.log
- * ----------------------------------------------------------- */
+ */
 static inline void log_open(void) {
     char exe_dir[512]  = {0};
     char log_dir[600]  = {0};
@@ -86,7 +49,7 @@ static inline void log_open(void) {
 
     g_log_fp = fopen(filename, "a");
     if (!g_log_fp) {
-        fprintf(stderr, "[ERROR] Failed to open log file: %s\n", filename);
+        fprintf(stderr, "[WARN] Failed to open log file: %s\n", filename);
     }
 }
 
